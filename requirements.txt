@@ -1,0 +1,10 @@
+yfinance
+# newsapi-python - Removed, using yfinance news
+google-generativeai
+pandas
+python-dotenv
+PyYAML
+streamlit
+pandas-ta
+plotly
+streamlit-autorefresh 

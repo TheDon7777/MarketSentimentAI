@@ -1,0 +1,27 @@
+market_indices:
+  - '^GSPC' # S&P 500
+  - '^IXIC' # Nasdaq
+stocks_to_track:
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - TSLA
+  - JPM
+  - NVDA
+  - V
+  - WMT
+  - UNH
+analysis_parameters:
+  # Average volume over how many recent trading days?
+  options_volume_lookback_days: 10
+  # Flag stock if today's options volume is > options_volume_threshold_ratio * average
+  options_volume_threshold_ratio: 2.0
+  # Average trading volume over how many recent trading days?
+  trading_volume_lookback_days: 20
+  # Flag stock if today's trading volume is > trading_volume_threshold_ratio * average
+  trading_volume_threshold_ratio: 1.5
+  # How many news articles to fetch per symbol?
+  news_articles_per_symbol: 3
+  # Which Gemini model to use for sentiment analysis?
+  sentiment_model: 'gemini-1.5-flash-latest' 
