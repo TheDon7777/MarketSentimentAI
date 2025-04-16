@@ -9,6 +9,8 @@ This project provides a Streamlit-based dashboard that analyzes market sentiment
 
 The goal is to offer a more holistic view than looking at news or technicals in isolation, utilizing free-tier APIs and local calculations where possible.
 
+![Demo GIF](demo.gif)
+
 ## Features ✨
 
 *   **Dashboard UI:** Interactive web interface built with Streamlit.
@@ -100,7 +102,6 @@ The application will fetch fresh data (or use cached data), perform the analysis
 
 *   Integrate more diverse data sources (RSS, alternative sentiment APIs, economic data).
 *   Implement more sophisticated options analysis (IV Rank, specific unusual activity screening).
-*   Allow user input for on-demand stock analysis.
 *   Add historical sentiment tracking and visualization.
 *   Improve error handling and user feedback within the UI.
 *   Refine AI prompts for even more nuanced analysis.
