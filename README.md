@@ -3,9 +3,10 @@
 This project provides a Streamlit-based dashboard that analyzes market sentiment by integrating data from various sources:
 
 *   **Market Data:** Fetches current and historical stock/index data using `yfinance`.
-*   **Technical Analysis:** Calculates key indicators like RSI and MACD locally using `pandas-ta`. It also calculates a proxy Market Put/Call Ratio based on options volume for tracked stocks.
+*   **Technical Analysis:** Calculates key indicators (RSI, MACD, SMA, Bollinger Bands, OBV) locally using `pandas-ta`. It also calculates derived status indicators (e.g., Price vs. SMA, OBV Trend, BB Status) and a proxy Market Put/Call Ratio based on options volume for tracked stocks.
 *   **News Aggregation:** Retrieves recent news headlines relevant to market indices and specific stocks using `yfinance`.
-*   **AI-Powered Sentiment Analysis:** Leverages the Google Gemini API to analyze news headlines (from `yfinance`) *in conjunction with* technical indicators (RSI, MACD, PCR) to provide a synthesized outlook, overall sentiment score, key news themes, and a summary of technical signals.
+*   **AI-Powered Sentiment Analysis:** Leverages the Google Gemini API to analyze news headlines *in conjunction with* technical context to provide a synthesized outlook, overall sentiment score, key news themes, and a summary of technical signals.
+*   **Live Updates:** Uses `streamlit-autorefresh` to periodically refresh price data.
 
 The goal is to offer a more holistic view than looking at news or technicals in isolation, utilizing free-tier APIs and local calculations where possible.
 
@@ -13,23 +14,45 @@ The goal is to offer a more holistic view than looking at news or technicals in 
 
 ## Features ✨
 
-*   **Dashboard UI:** Interactive web interface built with Streamlit.
-*   **Index Monitoring:** Displays current price, change, and AI-generated sentiment analysis for major market indices (configurable in `config.yaml`).
+The application is organized into several tabs:
+
+**1. Dashboard Tab:**
+
+*   **Index Monitoring:** Displays current price, change, and AI-generated sentiment analysis for major market indices (configurable in `config.yaml`). **Prices update automatically.**
 *   **Notable Stock Activity:** Identifies stocks from a tracked list (configurable in `config.yaml`) exhibiting:
     *   High trading volume relative to their recent average.
     *   High *absolute* options volume (among tracked stocks).
 *   **Detailed Stock View:** For flagged stocks, shows:
-    *   Current Price, Change, Volume.
-    *   Calculated RSI(14) and MACD status.
+    *   Live Price, Change, Volume. **Prices update automatically.**
+    *   Calculated technical indicators and derived statuses (RSI, MACD, Price vs SMA, SMA Trend, BBand Status, OBV Trend).
     *   Structured AI Analysis (powered by Google Gemini):
         *   Overall Sentiment (Positive/Negative/Neutral)
         *   Key News Themes (extracted from recent headlines)
-        *   Technical Signal Summary (AI interpretation of RSI/MACD/PCR context)
+        *   Technical Signal Summary (AI interpretation of TA context)
         *   Synthesized Outlook (combining news and technicals)
     *   Interactive Plotly chart showing Price (Candlestick), Volume, RSI, and MACD.
 *   **Market Sentiment Proxy:** Displays a simple Market Put/Call Ratio calculated from the options volume of tracked stocks.
-*   **Caching:** Uses Streamlit\'s caching (`@st.cache_data`) to improve performance on subsequent loads (data/analysis cached for 15 minutes).
-*   **Configuration:** Uses `.env` for API keys and `config.yaml` for parameters like tracked symbols, lookback periods, and thresholds.
+*   **On-Demand Analysis:** Input any ticker symbol to perform a full fetch, technical analysis, news retrieval, and AI sentiment analysis for that specific stock, including a detailed chart.
+*   **Session Watchlist:** Add up to 16 tickers to a temporary watchlist for the current browser session. Displays the symbol, a remove button, live price metric, and a mini price chart for each watched ticker.
+
+**2. Portfolio Tab:**
+
+*   **Position Entry:** Form to add new portfolio holdings (Symbol, Quantity, Purchase Price, Optional Date).
+*   **Holdings Display:** Shows current portfolio positions with calculated Cost Basis, Current Value, P/L $, and P/L %. **Current Price, Value, and P/L update automatically.**
+*   **AI Analysis (Batch & Overview):**
+    *   Button to trigger AI analysis for all holdings.
+    *   Analysis runs in batches in the background.
+    *   Displays individual AI sentiment results (Sentiment, Outlook, Themes, Technical Signal) for each analyzed holding in an expander.
+    *   Generates an overall **AI Portfolio Overview** assessing risk, diversification, and holistic outlook based on composition and individual analyses once all holdings are processed.
+
+**3. Configuration Tab:**
+
+*   **Viewer:** Displays the full content of the `config.yaml` file for easy reference.
+
+**General:**
+
+*   **Caching:** Uses Streamlit's caching (`@st.cache_data`) to improve performance for expensive operations (main analysis cached for ~15 mins, live quotes cached for ~1 min).
+*   **Configuration:** Uses `.env` for API keys and `config.yaml` for parameters like tracked symbols, TA parameters, and thresholds.
 *   **Modularity:** Code is structured into distinct modules for data fetching, analysis, news, sentiment, and the main app logic.
 
 ## Project Structure 🏗️
@@ -84,7 +107,7 @@ market_sentiment_ai/
     *   Edit `config.yaml` to change:
         *   `market_indices`: List of index symbols (e.g., `^GSPC`, `^IXIC`).
         *   `stocks_to_track`: List of stock symbols (e.g., `AAPL`, `MSFT`).
-        *   `analysis_parameters`: Thresholds for volume, lookback periods, number of news articles, etc.
+        *   `analysis_parameters`: Thresholds for volume, TA parameters (RSI window, MACD periods, SMA windows, BBands length/std), number of news articles, AI model name etc.
 
 ## Usage ▶️
 
@@ -95,8 +118,7 @@ market_sentiment_ai/
     python -m streamlit run main.py
     ```
 4.  Streamlit will start a local server and usually open the application automatically in your web browser (typically at `http://localhost:8501`).
-
-The application will fetch fresh data (or use cached data), perform the analysis, and display the dashboard.
+5.  The application will load data and present the **Dashboard** tab by default. You can navigate to the **Portfolio** and **Configuration** tabs using the UI. Explore the features like On-Demand Analysis, Watchlist, and Portfolio management/analysis.
 
 ## Future Enhancements 🚀
 
@@ -106,6 +128,8 @@ The application will fetch fresh data (or use cached data), perform the analysis
 *   Improve error handling and user feedback within the UI.
 *   Refine AI prompts for even more nuanced analysis.
 *   Package the project properly for easier distribution.
+*   Allow saving/loading portfolio data.
+*   Add more configuration options directly in the UI.
 
 ## Contributing 🤝
 

@@ -3,12 +3,20 @@ import time
 import re
 import pandas as pd # Added pandas import for Series typing
 from typing import List, Dict, Any, Tuple, Optional
+import traceback
 
 # Import config functions
 from .config_manager import get_api_key, get_config_parameter
 
-# --- Global Variables ---
+# --- Global Variables / Constants ---
 _model = None
+# Define safety settings at the module level
+SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+]
 
 # --- Initialization ---
 
@@ -32,18 +40,12 @@ def initialize_google_ai():
             "temperature": 0.6, # Slightly lower temp for more predictable structure
             "top_p": 1,
             "top_k": 1,
-            "max_output_tokens": 150, # Allow more tokens for summary
+            "max_output_tokens": 512, # Increased token limit
         }
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
         _model = genai.GenerativeModel(
             model_name=model_name,
             generation_config=generation_config,
-            safety_settings=safety_settings
+            safety_settings=SAFETY_SETTINGS # Use module-level constant
         )
         print(f"Google AI Model '{model_name}' initialized successfully.")
         return _model
@@ -345,4 +347,152 @@ if __name__ == '__main__':
         import json
         print(json.dumps(results, indent=2))
     else:
-        print("Sentiment analysis cannot proceed without initialized Google AI model.") 
+        print("Sentiment analysis cannot proceed without initialized Google AI model.")
+
+# --- New Portfolio Overview Function --- #
+def analyze_portfolio_overview(
+    portfolio_df: pd.DataFrame,
+    individual_analyses: Dict[str, Dict],
+    safety_settings_param: List[Dict],
+    model: Optional[genai.GenerativeModel] = None
+) -> Dict[str, str]:
+    """
+    Analyzes the overall portfolio using AI based on composition and individual sentiments.
+
+    Args:
+        portfolio_df: DataFrame containing portfolio holdings information.
+        individual_analyses: Dictionary with individual analysis results for symbols.
+        safety_settings_param: The safety settings list to use for the API call.
+        model: The initialized Google Gemini model instance.
+
+    Returns:
+        A dictionary containing the overview analysis ('Overall Risk Assessment', 'Diversification Comments', 'Holistic Outlook')
+        or an error message.
+    """
+    global _model # Ensure we use the global model if one isn't passed
+    if model is None:
+        if _model is None: # Check if global model is initialized
+             _model = initialize_google_ai() # Initialize if not
+        model = _model # Use the global one
+        if model is None:
+            return {"error": "AI Model not initialized.", "status": "Error"}
+
+    # --- Input Validation ---
+    if not isinstance(portfolio_df, pd.DataFrame) or portfolio_df.empty:
+        return {"error": "Portfolio data is missing or invalid.", "status": "Error"}
+    if not isinstance(individual_analyses, dict):
+         return {"error": "Individual analysis results are missing or invalid.", "status": "Error"}
+
+    # --- Prepare Data for Prompt ---
+    essential_composition_cols = ['Symbol', 'Quantity', 'Cost Basis', 'Current Value']
+    if not all(col in portfolio_df.columns for col in essential_composition_cols):
+        return {"error": f"Portfolio DataFrame missing one or more essential columns: {essential_composition_cols}", "status": "Error"}
+
+    optional_pl_cols = ['P/L $', 'P/L %']
+    composition_cols = essential_composition_cols + [col for col in optional_pl_cols if col in portfolio_df.columns]
+
+    composition_summary = portfolio_df[composition_cols].copy()
+    for col in ['Quantity', 'Cost Basis', 'Current Value', 'P/L $', 'P/L %']:
+        if col in composition_summary.columns:
+             composition_summary[col] = pd.to_numeric(composition_summary[col], errors='coerce')
+
+    def safe_format(value, fmt):
+        try:
+            return fmt.format(value) if pd.notna(value) else 'N/A'
+        except (ValueError, TypeError):
+            return 'N/A'
+
+    if 'Cost Basis' in composition_summary: composition_summary['Cost Basis'] = composition_summary['Cost Basis'].apply(lambda x: safe_format(x, '${:,.2f}'))
+    if 'Current Value' in composition_summary: composition_summary['Current Value'] = composition_summary['Current Value'].apply(lambda x: safe_format(x, '${:,.2f}'))
+    if 'P/L $' in composition_summary: composition_summary['P/L $'] = composition_summary['P/L $'].apply(lambda x: safe_format(x, '${:,.2f}'))
+    if 'P/L %' in composition_summary: composition_summary['P/L %'] = composition_summary['P/L %'].apply(lambda x: safe_format(x, '{:.2f}%'))
+    if 'Quantity' in composition_summary: composition_summary['Quantity'] = composition_summary['Quantity'].apply(lambda x: safe_format(x, '{:,.4f}'))
+
+    composition_summary_str = composition_summary.to_string(index=False, na_rep='N/A')
+
+    analysis_summary_list = []
+    for symbol, analysis in individual_analyses.items():
+         if isinstance(analysis, dict) and analysis.get('status') == 'Completed':
+              analysis_summary_list.append({
+                   'Symbol': symbol,
+                   'Sentiment': analysis.get('sentiment', 'N/A'),
+                   'Outlook': analysis.get('outlook', 'N/A')
+              })
+
+    if not analysis_summary_list:
+         return {"error": "No completed individual analyses found to generate overview.", "status": "Error"}
+
+    analysis_summary_df = pd.DataFrame(analysis_summary_list)
+    analysis_summary_str = analysis_summary_df.to_string(index=False, na_rep='N/A')
+
+    total_portfolio_value = pd.to_numeric(portfolio_df['Current Value'], errors='coerce').sum()
+    if pd.isna(total_portfolio_value): total_portfolio_value = 0
+
+    # --- Construct the Prompt --- #
+    prompt = f"""
+Analyze the following investment portfolio based on its composition and the AI-generated sentiment analysis of its individual holdings. The total current value of the portfolio is approximately ${total_portfolio_value:,.2f}.
+
+**Portfolio Composition:**
+```
+{composition_summary_str}
+```
+
+**Individual Holding Analysis Summary (Only includes successfully analyzed holdings):**
+```
+{analysis_summary_str}
+```
+
+**Analysis Tasks:**
+1.  **Overall Risk Assessment:** Based on the portfolio's composition (e.g., concentration by value - compare individual holding 'Current Value' to total portfolio value, types of assets like stocks vs. crypto identifiable by symbol format like '-USD'), and the general sentiment/outlook of the holdings analyzed, provide a brief assessment of the portfolio's potential risk level (e.g., High, Medium, Low). Explain the key contributing factors based *only* on the provided data.
+2.  **Diversification Comments:** Comment on the portfolio's diversification based *only* on the list of symbols and their 'Current Value'. Note any significant concentrations (e.g., any single asset representing >20% of the total portfolio value). Avoid making assumptions about sectors if not explicitly provided. Mention if only a subset of holdings could be analyzed for the summary.
+3.  **Holistic Outlook:** Provide a synthesized outlook for the portfolio as a whole, considering the combined sentiment of its *analyzed* holdings and any notable concentrations or risks identified in the previous steps. Briefly summarize the key positive and negative factors influencing this outlook based *only* on the provided data. Acknowledge if the outlook is based on partial analysis.
+
+**Output Format:**
+Please provide the analysis clearly structured under the exact headings: "Overall Risk Assessment:", "Diversification Comments:", and "Holistic Outlook:". Be concise and focus on insights derived directly from the provided data. Do not give financial advice or make recommendations.
+"""
+
+    # --- Call the AI Model --- #
+    try:
+        print("--- Sending Portfolio Overview request to AI ---")
+        print(f"DEBUG: Checking safety_settings_param within analyze_portfolio_overview: {safety_settings_param}")
+        response = model.generate_content(prompt, safety_settings=safety_settings_param)
+        response.resolve()
+        analysis_text = response.text
+        print("--- Received Portfolio Overview response from AI ---")
+
+        # --- Parse the Response --- #
+        parsed_analysis = {
+            "Overall Risk Assessment": "N/A",
+            "Diversification Comments": "N/A",
+            "Holistic Outlook": "N/A",
+            "raw_text": analysis_text,
+            "status": "Parsing Error"
+        }
+        risk_match = re.search(r"Overall Risk Assessment:\s*(.*?)(?:Diversification Comments:|Holistic Outlook:|\Z)", analysis_text, re.IGNORECASE | re.DOTALL)
+        if risk_match: parsed_analysis["Overall Risk Assessment"] = risk_match.group(1).strip()
+
+        div_match = re.search(r"Diversification Comments:\s*(.*?)(?:Overall Risk Assessment:|Holistic Outlook:|\Z)", analysis_text, re.IGNORECASE | re.DOTALL)
+        if div_match: parsed_analysis["Diversification Comments"] = div_match.group(1).strip()
+
+        outlook_match = re.search(r"Holistic Outlook:\s*(.*?)(?:Overall Risk Assessment:|Diversification Comments:|\Z)", analysis_text, re.IGNORECASE | re.DOTALL)
+        if outlook_match: parsed_analysis["Holistic Outlook"] = outlook_match.group(1).strip()
+
+        if parsed_analysis["Overall Risk Assessment"] == "N/A" and parsed_analysis["Diversification Comments"] == "N/A" and parsed_analysis["Holistic Outlook"] == "N/A":
+             print("Warning: Could not parse AI response structure for portfolio overview. Check raw_text.")
+             parsed_analysis["error"] = "Failed to parse AI response structure. See raw_text."
+             if not risk_match: parsed_analysis["Overall Risk Assessment"] = analysis_text
+             parsed_analysis["status"] = "Parsing Error"
+        else:
+            parsed_analysis["status"] = "Completed"
+
+        # del parsed_analysis["raw_text"]
+
+        return parsed_analysis
+
+    except Exception as e:
+        print(f"Error during portfolio overview AI call: {e}")
+        traceback.print_exc()
+        error_message = f"AI portfolio overview failed: {type(e).__name__}"
+        if hasattr(e, 'message') and e.message: error_message += f" - {e.message}"
+        elif hasattr(e, 'args') and e.args: error_message += f" - {str(e.args)}"
+        return {"error": error_message, "status": "Error", "Overall Risk Assessment": "N/A", "Diversification Comments": "N/A", "Holistic Outlook": "N/A"} 

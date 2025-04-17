@@ -230,45 +230,119 @@ def calculate_technical_sentiment(ta_series: pd.Series) -> str:
     if score <= -3: return "Negative"
     return "Neutral"
 
-def _add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _add_status_columns(df_input: pd.DataFrame) -> pd.DataFrame:
     """Adds status columns based on existing TA columns AND technical sentiment."""
+    # Work on a copy to avoid modifying the original DataFrame view passed in
+    df = df_input.copy()
+
     # Price vs SMA
     if 'Close' in df.columns and 'SMA_50' in df.columns:
-        df['Price_vs_SMA50'] = df.apply(lambda r: 'Above' if pd.notna(r['Close']) and pd.notna(r['SMA_50']) and r['Close'] > r['SMA_50'] else ('Below' if pd.notna(r['Close']) and pd.notna(r['SMA_50']) and r['Close'] < r['SMA_50'] else 'N/A'), axis=1)
+        df.loc[df['Close'] > df['SMA_50'], 'Price_vs_SMA50'] = 'Above'
+        df.loc[df['Close'] <= df['SMA_50'], 'Price_vs_SMA50'] = 'Below'
     if 'Close' in df.columns and 'SMA_200' in df.columns:
-        df['Price_vs_SMA200'] = df.apply(lambda r: 'Above' if pd.notna(r['Close']) and pd.notna(r['SMA_200']) and r['Close'] > r['SMA_200'] else ('Below' if pd.notna(r['Close']) and pd.notna(r['SMA_200']) and r['Close'] < r['SMA_200'] else 'N/A'), axis=1)
+        df.loc[df['Close'] > df['SMA_200'], 'Price_vs_SMA200'] = 'Above'
+        df.loc[df['Close'] <= df['SMA_200'], 'Price_vs_SMA200'] = 'Below'
 
-    # SMA50 vs SMA200 (Golden/Death Cross approximation)
+    # SMA50 vs SMA200 (Golden/Death Cross proxy)
     if 'SMA_50' in df.columns and 'SMA_200' in df.columns:
-        df['SMA50_vs_SMA200'] = df.apply(lambda r: 'Above (Potential Golden Cross)' if pd.notna(r['SMA_50']) and pd.notna(r['SMA_200']) and r['SMA_50'] > r['SMA_200'] else ('Below (Potential Death Cross)' if pd.notna(r['SMA_50']) and pd.notna(r['SMA_200']) and r['SMA_50'] < r['SMA_200'] else 'N/A'), axis=1)
+        df.loc[df['SMA_50'] > df['SMA_200'], 'SMA50_vs_SMA200'] = 'Golden Cross Signal'
+        df.loc[df['SMA_50'] <= df['SMA_200'], 'SMA50_vs_SMA200'] = 'Death Cross Signal'
 
-    # BBands Status
-    if 'Close' in df.columns and 'BB_Lower' in df.columns and 'BB_Upper' in df.columns:
-        df['BB_Status'] = df.apply(
-            lambda r: 'Near Upper' if pd.notna(r['Close']) and pd.notna(r['BB_Upper']) and r['Close'] >= r['BB_Upper'] else
-                      ('Near Lower' if pd.notna(r['Close']) and pd.notna(r['BB_Lower']) and r['Close'] <= r['BB_Lower'] else
-                      'Between Bands'), axis=1
-        )
-        # Optional: Add check for band squeeze?
-        # df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle']
-        # df['BB_Squeeze'] = df['BB_Width'] < df['BB_Width'].rolling(WINDOW).quantile(0.1) # Example
-
-    # --- Add Technical Sentiment using the rule-based function --- #
-    # Ensure all required columns exist before applying
-    required_cols_for_tech_sentiment = [
-        'RSI', 'MACD', 'Signal', 'Histogram', 'Price_vs_SMA50',
-        'Price_vs_SMA200', 'SMA50_vs_SMA200', 'BB_Status', 'OBV_Trend'
-    ]
-    # Only calculate if combined_ta_df was successfully populated with needed columns
-    # We apply row-wise as the function expects a Series for one symbol
-    if all(col in df.columns for col in required_cols_for_tech_sentiment):
-         df['Technical_Sentiment'] = df.apply(calculate_technical_sentiment, axis=1)
+    # Bollinger Bands Status
+    # Use the known renamed columns directly
+    bbl_col_name = 'BB_Lower'
+    bbu_col_name = 'BB_Upper'
+    if bbl_col_name in df.columns and bbu_col_name in df.columns and 'Close' in df.columns:
+        # Ensure columns are numeric before comparison, handle potential NaNs
+        df.loc[pd.to_numeric(df['Close'], errors='coerce') <= pd.to_numeric(df[bbl_col_name], errors='coerce'), 'BB_Status'] = 'Testing Lower Band'
+        df.loc[pd.to_numeric(df['Close'], errors='coerce') >= pd.to_numeric(df[bbu_col_name], errors='coerce'), 'BB_Status'] = 'Testing Upper Band'
+        df.loc[(pd.to_numeric(df['Close'], errors='coerce') > pd.to_numeric(df[bbl_col_name], errors='coerce')) & 
+               (pd.to_numeric(df['Close'], errors='coerce') < pd.to_numeric(df[bbu_col_name], errors='coerce')), 'BB_Status'] = 'Within Bands'
+        # Handle cases where comparison couldn't be made (e.g., NaNs in BBands or Close)
+        df['BB_Status'].fillna('N/A', inplace=True)
     else:
-         print("Warning: Skipping Technical Sentiment calculation due to missing columns in TA DataFrame.")
-         # Add column with default value if needed, or handle absence later
-         if 'Technical_Sentiment' not in df.columns:
-              df['Technical_Sentiment'] = 'N/A'
+        print(f"Warning: Missing required columns for BB_Status calculation (need Close, {bbl_col_name}, {bbu_col_name})")
+        df.loc[:, 'BB_Status'] = 'N/A' # Assign default if columns not found
 
+    # MACD Status (using histogram)
+    macd_hist_col = next((col for col in df.columns if col.startswith('MACDh_')), None)
+    macd_line_col = next((col for col in df.columns if col.startswith('MACD_') and not col.startswith('MACDh') and not col.startswith('MACDs')), None)
+    macd_signal_col = next((col for col in df.columns if col.startswith('MACDs_')), None)
+
+    if macd_hist_col and macd_line_col and macd_signal_col:
+        df.loc[df[macd_hist_col] > 0, 'MACD_Status'] = 'Histogram Positive'
+        df.loc[df[macd_hist_col] <= 0, 'MACD_Status'] = 'Histogram Negative'
+        # Add crossover status if helpful
+        df.loc[(df[macd_line_col] > df[macd_signal_col]), 'MACD_Crossover'] = 'Bullish Crossover Likely'
+        df.loc[(df[macd_line_col] <= df[macd_signal_col]), 'MACD_Crossover'] = 'Bearish Crossover Likely'
+    else:
+        df.loc[:, 'MACD_Status'] = 'N/A'
+        df.loc[:, 'MACD_Crossover'] = 'N/A'
+
+    # Add Technical Sentiment
+    df = _add_technical_sentiment(df) # Call the helper
+
+    return df
+
+def _add_technical_sentiment(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds a rule-based technical sentiment score based on available indicators."""
+
+    # --- Identify expected TA column names --- #
+    # Note: Adjust these based on the actual parameters used in run_analysis_batch
+    rsi_col = next((col for col in df.columns if col.startswith('RSI_')), None)
+    macd_status_col = 'MACD_Status' # This is calculated in _add_status_columns
+    price_vs_sma50_col = 'Price_vs_SMA50' # Calculated in _add_status_columns
+    sma50_vs_sma200_col = 'SMA50_vs_SMA200' # Calculated in _add_status_columns
+    bb_status_col = 'BB_Status' # Calculated in _add_status_columns
+    obv_trend_col = 'OBV_Trend' # Calculated in _add_status_columns
+
+    # Check if the core status columns (which rely on base TA) exist
+    required_status_cols = [macd_status_col, price_vs_sma50_col, sma50_vs_sma200_col, bb_status_col, obv_trend_col]
+    if not all(col in df.columns for col in required_status_cols):
+         print(f"Warning: Skipping Technical Sentiment calculation due to missing base status columns: {[col for col in required_status_cols if col not in df.columns]}")
+         df.loc[:, 'Technical_Sentiment'] = 'N/A'
+         return df
+
+    # --- Define conditions using the identified column names --- #
+    conditions = {
+        'bullish': [
+            (lambda x: x.get(price_vs_sma50_col, '') == 'Above'),
+            (lambda x: x.get(sma50_vs_sma200_col, '') == 'Golden Cross Signal'),
+            (lambda x: x.get(macd_status_col, '') == 'Histogram Positive'),
+            (lambda x: x.get(obv_trend_col, '') == 'Rising'),
+            # Optional RSI condition (check if rsi_col exists)
+            (lambda x: rsi_col and x.get(rsi_col, 50) < 70 and x.get(rsi_col, 50) > 50), # RSI bullish but not overbought
+            # Optional BB condition
+            (lambda x: x.get(bb_status_col, '') != 'Testing Upper Band')
+        ],
+        'bearish': [
+            (lambda x: x.get(price_vs_sma50_col, '') == 'Below'),
+            (lambda x: x.get(sma50_vs_sma200_col, '') == 'Death Cross Signal'),
+            (lambda x: x.get(macd_status_col, '') == 'Histogram Negative'),
+            (lambda x: x.get(obv_trend_col, '') == 'Falling'),
+             # Optional RSI condition
+            (lambda x: rsi_col and x.get(rsi_col, 50) > 30 and x.get(rsi_col, 50) < 50), # RSI bearish but not oversold
+            # Optional BB condition
+            (lambda x: x.get(bb_status_col, '') != 'Testing Lower Band')
+        ]
+    }
+
+    def calculate_sentiment(row):
+        # Filter out None results from conditions where columns might be missing
+        bull_score = sum(cond(row) for cond in conditions['bullish'] if cond(row) is not None)
+        bear_score = sum(cond(row) for cond in conditions['bearish'] if cond(row) is not None)
+
+        # Adjust threshold based on available signals? Maybe require >= 2 signals?
+        min_signals_threshold = 2
+        if bull_score > bear_score and bull_score >= min_signals_threshold:
+            return 'Bullish'
+        elif bear_score > bull_score and bear_score >= min_signals_threshold:
+            return 'Bearish'
+        else:
+            return 'Neutral/Mixed'
+
+    # Apply using .loc to avoid SettingWithCopyWarning
+    df.loc[:, 'Technical_Sentiment'] = df.apply(calculate_sentiment, axis=1)
     return df
 
 # --- Main Analysis Function ---
@@ -323,21 +397,22 @@ def analyze_market_activity(
 
     # --- Combine TA Results into a single DataFrame ---
     ticker_index = historical_stock_data.index.get_level_values('Ticker').unique()
-    combined_ta_df = pd.DataFrame(index=ticker_index)
+    # Ensure combined_ta_df is a copy initially
+    combined_ta_df = pd.DataFrame(index=ticker_index).copy()
 
-    for name, df in all_ta_calcs.items():
-        if df is not None:
-            if isinstance(df, pd.Series):
-                # Ensure Series name matches if not already set (e.g., RSI)
-                if df.name is None and name == 'RSI': df = df.rename('RSI')
-                if df.name is not None:
-                     combined_ta_df = combined_ta_df.join(df)
+    for name, df_ta_result in all_ta_calcs.items(): # Renamed df to df_ta_result
+        if df_ta_result is not None:
+            if isinstance(df_ta_result, pd.Series):
+                # Ensure Series name matches if not already set
+                if df_ta_result.name is None and name == 'RSI': df_ta_result = df_ta_result.rename('RSI')
+                if df_ta_result.name is not None:
+                     combined_ta_df = combined_ta_df.join(df_ta_result)
                 else:
                      print(f"Warning: TA Series for {name} has no name, cannot join.")
-            elif isinstance(df, pd.DataFrame):
-                combined_ta_df = combined_ta_df.join(df)
+            elif isinstance(df_ta_result, pd.DataFrame):
+                combined_ta_df = combined_ta_df.join(df_ta_result)
             else:
-                 print(f"Warning: Unexpected type for TA result {name}: {type(df)}")
+                 print(f"Warning: Unexpected type for TA result {name}: {type(df_ta_result)}")
 
     # --- Add Status Columns (requires current price) ---
     if current_stock_data is not None and not current_stock_data.empty and not combined_ta_df.empty:
@@ -348,6 +423,8 @@ def analyze_market_activity(
              current_prices = current_stock_data['Close']
 
          combined_ta_df = combined_ta_df.join(current_prices.rename('Close'))
+         # --> Add print statement here <--
+         print("DEBUG: Columns before calling _add_status_columns:", combined_ta_df.columns)
          combined_ta_df = _add_status_columns(combined_ta_df) # Add Price_vs_SMA, BB_Status etc.
 
     # --- Volume Analysis (uses current_stock_data and historical_stock_data) ---
